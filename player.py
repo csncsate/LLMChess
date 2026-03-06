@@ -9,9 +9,7 @@ from chess_tournament.players import Player
 
 
 class TransformerPlayer(Player):
-    """
-    Tiny LM baseline chess player.
-
+    """    
     REQUIRED:
         Subclasses chess_tournament.players.Player
     """
@@ -20,20 +18,12 @@ class TransformerPlayer(Player):
 
     def __init__(
         self,
-        name: str = "TinyLMPlayer",
-        model_id: str = "HuggingFaceTB/SmolLM2-135M-Instruct",
-        temperature: float = 0.7,
-        max_new_tokens: int = 8,
+        name: str = "LLMChess",
+        model_id: str = "csncsate/LLMChess",
     ):
         super().__init__(name)
-
         self.model_id = model_id
-        self.temperature = temperature
-        self.max_new_tokens = max_new_tokens
-
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        # Lazy-loaded components
         self.tokenizer = None
         self.model = None
 
@@ -48,8 +38,11 @@ class TransformerPlayer(Player):
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
-            self.model = AutoModelForCausalLM.from_pretrained(self.model_id)
-            self.model.to(self.device)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_id,
+                torch_dtype=torch.float16,
+                device_map="auto"
+                )
             self.model.eval()
 
     # -------------------------
@@ -57,10 +50,28 @@ class TransformerPlayer(Player):
     # -------------------------
     def _build_prompt(self, fen: str) -> str:
         return f"FEN: {fen}\nMove:"
+    
+    def _score_moves_batch(self, prompt: str, moves: list) -> list:
+        prompt_ids = self.tokenizer(prompt, return_tensors="pt").input_ids
+        prompt_len = prompt_ids.shape[1]
 
-    def _extract_move(self, text: str) -> Optional[str]:
-        match = self.UCI_REGEX.search(text)
-        return match.group(1).lower() if match else None
+        fulls = [prompt + " " + m for m in moves]
+        inputs = self.tokenizer(fulls, return_tensors="pt", padding=True).to(self.model.device)
+
+        with torch.no_grad():
+            logits = self.model(**inputs).logits
+
+        log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+        scores = []
+        for i, move in enumerate(moves):
+            ids = inputs.input_ids[i]
+            move_ids = self.tokenizer(" " + move, return_tensors="pt").input_ids[0][1:]
+            move_len = len(move_ids)
+            end = ids.tolist().index(self.tokenizer.pad_token_id) if self.tokenizer.pad_token_id in ids.tolist() else len(ids)
+            start = end - move_len
+            score = sum(log_probs[i, start + j - 1, ids[start + j]].item() for j in range(move_len))
+            scores.append(score)
+        return scores
 
     def _random_legal(self, fen: str) -> Optional[str]:
         board = chess.Board(fen)
@@ -71,37 +82,20 @@ class TransformerPlayer(Player):
     # Main API
     # -------------------------
     def get_move(self, fen: str) -> Optional[str]:
-
         try:
             self._load_model()
         except Exception:
             return self._random_legal(fen)
-
+    
+        board = chess.Board(fen)
+        legal_moves = [m.uci() for m in board.legal_moves]
+        if not legal_moves:
+            return None
+    
         prompt = self._build_prompt(fen)
-
+    
         try:
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=self.max_new_tokens,
-                    do_sample=True,
-                    temperature=self.temperature,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                )
-
-            decoded = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-            if decoded.startswith(prompt):
-                decoded = decoded[len(prompt):]
-
-            move = self._extract_move(decoded)
-
-            if move:
-                return move
-
+            scores = self._score_moves_batch(prompt, legal_moves)
+            return legal_moves[scores.index(max(scores))]
         except Exception:
-            pass
-
-        return self._random_legal(fen)
+            return self._random_legal(fen)
