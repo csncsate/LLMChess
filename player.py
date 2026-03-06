@@ -7,6 +7,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 
 from chess_tournament.players import Player
 
+_MODEL_CACHE = {}
 
 class TransformerPlayer(Player):
     """    
@@ -31,19 +32,22 @@ class TransformerPlayer(Player):
     # Lazy loading
     # -------------------------
     def _load_model(self):
-        if self.model is None:
+        global _MODEL_CACHE
+        if "model" not in _MODEL_CACHE:
             print(f"[{self.name}] Loading {self.model_id} on {self.device}...")
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
-
-            if self.tokenizer.pad_token is None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
-
-            self.model = AutoModelForCausalLM.from_pretrained(
+            tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            model = AutoModelForCausalLM.from_pretrained(
                 self.model_id,
                 torch_dtype=torch.float16,
                 device_map="auto"
-                )
-            self.model.eval()
+            )
+            model.eval()
+            _MODEL_CACHE["model"] = model
+            _MODEL_CACHE["tokenizer"] = tokenizer
+        self.model = _MODEL_CACHE["model"]
+        self.tokenizer = _MODEL_CACHE["tokenizer"]
 
     # -------------------------
     # Prompt
