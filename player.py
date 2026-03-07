@@ -67,23 +67,47 @@ class TransformerPlayer(Player):
         moves = list(board.legal_moves)
         return random.choice(moves).uci() if moves else None
     
+    def _is_hanging(self, board: chess.Board, move: chess.Move) -> bool:
+        piece = board.piece_at(move.from_square)
+        if piece is None:
+            return False
+
+        board.push(move)
+        to_sq = move.to_square
+
+        # is the square attacked by opponent?
+        opponent = board.turn  # turn flipped after push
+        if board.is_attacked_by(opponent, to_sq):
+            me = not opponent
+            if not board.is_attacked_by(me, to_sq):
+                board.pop()
+                return True  # hanging - attacked and undefended
+
+        board.pop()
+        return False
+    
     def _heuristic_bonus(self, fen: str, move: str) -> float:
         board = chess.Board(fen)
         chess_move = chess.Move.from_uci(move)
         bonus = 0.0
-
+    
         # checkmate
         board.push(chess_move)
         if board.is_checkmate():
             return 1000.0
-        # check
         if board.is_check():
             bonus += 2.0
         board.pop()
-
+    
         # capture
         if board.is_capture(chess_move):
             bonus += 1.0
+    
+        # penalize hanging pieces
+        if self._is_hanging(board, chess_move):
+            bonus -= 3.0
+    
+        return bonus
     
         return bonus
 
