@@ -72,16 +72,26 @@ class TransformerPlayer(Player):
         if piece is None:
             return False
 
+        piece_values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
+                        chess.ROOK: 5, chess.QUEEN: 9}
+
         board.push(move)
         to_sq = move.to_square
+        opponent = board.turn
+        us = not opponent
 
-        # is the square attacked by opponent?
-        opponent = board.turn  # turn flipped after push
         if board.is_attacked_by(opponent, to_sq):
-            me = not opponent
-            if not board.is_attacked_by(me, to_sq):
+            if not board.is_attacked_by(us, to_sq):
                 board.pop()
-                return True  # hanging - attacked and undefended
+                return True  # completely undefended
+
+            # check if attacked by a less valuable piece
+            our_value = piece_values.get(piece.piece_type, 0)
+            for attacker_sq in board.attackers(opponent, to_sq):
+                attacker = board.piece_at(attacker_sq)
+                if attacker and piece_values.get(attacker.piece_type, 0) < our_value:
+                    board.pop()
+                    return True  # losing trade
 
         board.pop()
         return False
@@ -90,7 +100,7 @@ class TransformerPlayer(Player):
         board = chess.Board(fen)
         chess_move = chess.Move.from_uci(move)
         bonus = 0.0
-    
+
         # checkmate
         board.push(chess_move)
         if board.is_checkmate():
@@ -98,15 +108,15 @@ class TransformerPlayer(Player):
         if board.is_check():
             bonus += 2.0
         board.pop()
-    
+
         # capture
         if board.is_capture(chess_move):
             bonus += 1.0
-    
+
         # penalize hanging pieces
         if self._is_hanging(board, chess_move):
             bonus -= 3.0
-    
+
         return bonus
     
         return bonus
