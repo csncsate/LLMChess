@@ -4,19 +4,9 @@ import re
 import torch
 from typing import Optional
 from transformers import AutoTokenizer, AutoModelForCausalLM
-
 from chess_tournament.players import Player
 
-_MODEL_CACHE = {}
-
 class TransformerPlayer(Player):
-    """    
-    REQUIRED:
-        Subclasses chess_tournament.players.Player
-    """
-
-    UCI_REGEX = re.compile(r"\b([a-h][1-8][a-h][1-8][qrbn]?)\b", re.IGNORECASE)
-
     def __init__(
         self,
         name: str = "LLMChess",
@@ -32,22 +22,19 @@ class TransformerPlayer(Player):
     # Lazy loading
     # -------------------------
     def _load_model(self):
-        global _MODEL_CACHE
-        if "model" not in _MODEL_CACHE:
+        if self.model is None:
             print(f"[{self.name}] Loading {self.model_id} on {self.device}...")
-            tokenizer = AutoTokenizer.from_pretrained(self.model_id)
-            if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token
-            model = AutoModelForCausalLM.from_pretrained(
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+
+            self.model = AutoModelForCausalLM.from_pretrained(
                 self.model_id,
                 torch_dtype=torch.float16,
                 device_map="auto"
-            )
-            model.eval()
-            _MODEL_CACHE["model"] = model
-            _MODEL_CACHE["tokenizer"] = tokenizer
-        self.model = _MODEL_CACHE["model"]
-        self.tokenizer = _MODEL_CACHE["tokenizer"]
+                )
+            self.model.eval()
 
     # -------------------------
     # Prompt
@@ -55,10 +42,7 @@ class TransformerPlayer(Player):
     def _build_prompt(self, fen: str) -> str:
         return f"FEN: {fen}\nMove:"
     
-    def _score_moves_batch(self, prompt: str, moves: list) -> list:
-        prompt_ids = self.tokenizer(prompt, return_tensors="pt").input_ids
-        prompt_len = prompt_ids.shape[1]
-
+    def _score_moves_batch(self, prompt: str, moves: list) -> list:        
         fulls = [prompt + " " + m for m in moves]
         inputs = self.tokenizer(fulls, return_tensors="pt", padding=True).to(self.model.device)
 
