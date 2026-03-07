@@ -40,7 +40,8 @@ class TransformerPlayer(Player):
     # Prompt
     # -------------------------
     def _build_prompt(self, fen: str) -> str:
-        return f"FEN: {fen}\nMove:"
+        epd = " ".join(fen.split()[:4])
+        return f"FEN: {epd}\nMove:"
     
     def _score_moves_batch(self, prompt: str, moves: list) -> list:        
         fulls = [prompt + " " + m for m in moves]
