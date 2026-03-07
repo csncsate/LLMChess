@@ -1,6 +1,5 @@
 import chess
 import random
-import re
 import torch
 from typing import Optional
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -67,60 +66,46 @@ class TransformerPlayer(Player):
         moves = list(board.legal_moves)
         return random.choice(moves).uci() if moves else None
     
-    def _is_hanging(self, board: chess.Board, move: chess.Move) -> bool:
-        piece = board.piece_at(move.from_square)
-        if piece is None:
-            return False
-
+    def _heuristic_bonus(self, fen: str, move: str) -> float:
         piece_values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
                         chess.ROOK: 5, chess.QUEEN: 9}
-
-        board.push(move)
-        to_sq = move.to_square
-        opponent = board.turn
-        us = not opponent
-
-        if board.is_attacked_by(opponent, to_sq):
-            if not board.is_attacked_by(us, to_sq):
-                board.pop()
-                return True  # completely undefended
-
-            # check if attacked by a less valuable piece
-            our_value = piece_values.get(piece.piece_type, 0)
-            for attacker_sq in board.attackers(opponent, to_sq):
-                attacker = board.piece_at(attacker_sq)
-                if attacker and piece_values.get(attacker.piece_type, 0) < our_value:
-                    board.pop()
-                    return True  # losing trade
-
-        board.pop()
-        return False
-    
-    def _heuristic_bonus(self, fen: str, move: str) -> float:
         board = chess.Board(fen)
         chess_move = chess.Move.from_uci(move)
+        piece = board.piece_at(chess_move.from_square)
+        piece_val = piece_values.get(piece.piece_type, 0) if piece else 0
         bonus = 0.0
 
-        # checkmate
+        if piece_val >= 3 and board.is_attacked_by(board.turn ^ 1, chess_move.from_square):
+            bonus += piece_val * 1.5
+
         board.push(chess_move)
+
         if board.is_checkmate():
             return 1000.0
         if board.is_check():
             bonus += 2.0
+
+        opponent = board.turn
+        us = not opponent
+        to_sq = chess_move.to_square
+        if board.is_attacked_by(opponent, to_sq):
+            if not board.is_attacked_by(us, to_sq):
+                bonus -= 3.0
+            elif piece_val > 0:
+                for attacker_sq in board.attackers(opponent, to_sq):
+                    attacker = board.piece_at(attacker_sq)
+                    if attacker and piece_values.get(attacker.piece_type, 0) < piece_val:
+                        bonus -= 3.0
+                        break
+
         board.pop()
 
-        # capture
         if board.is_capture(chess_move):
             bonus += 1.0
 
-        # penalize hanging pieces
-        if self._is_hanging(board, chess_move):
-            bonus -= 3.0
-
         return bonus
+
     
-        return bonus
-
     # -------------------------
     # Main API
     # -------------------------
