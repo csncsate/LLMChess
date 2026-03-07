@@ -66,6 +66,26 @@ class TransformerPlayer(Player):
         board = chess.Board(fen)
         moves = list(board.legal_moves)
         return random.choice(moves).uci() if moves else None
+    
+    def _heuristic_bonus(self, fen: str, move: str) -> float:
+        board = chess.Board(fen)
+        chess_move = chess.Move.from_uci(move)
+        bonus = 0.0
+
+        # checkmate
+        board.push(chess_move)
+        if board.is_checkmate():
+            return 1000.0
+        # check
+        if board.is_check():
+            bonus += 2.0
+        board.pop()
+
+        # capture
+        if board.is_capture(chess_move):
+            bonus += 1.0
+    
+        return bonus
 
     # -------------------------
     # Main API
@@ -85,6 +105,7 @@ class TransformerPlayer(Player):
     
         try:
             scores = self._score_moves_batch(prompt, legal_moves)
+            scores = [s + self._heuristic_bonus(fen, m) for s, m in zip(scores, legal_moves)]
             return legal_moves[scores.index(max(scores))]
         except Exception:
             return self._random_legal(fen)
